@@ -16,6 +16,10 @@ let consecutiveSilent = 0;      // Track consecutive silent chunks
 // ——— Receive messages from background ———
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
+    case 'PING':
+      sendResponse({ ready: true });
+      break;
+
     case 'START_CAPTURE':
       startCapture(message.streamId);
       sendResponse({ success: true });
@@ -211,7 +215,7 @@ async function transcribeChunk(audioBlob) {
         text: data.text,
         language: data.language,
         duration: data.duration
-      });
+      }).catch(err => console.debug('[Offscreen] Background worker not ready:', err.message));
       
       console.log(`[Offscreen] Transcribed (${data.language}): ${data.text.substring(0, 80)}...`);
     }
