@@ -96,6 +96,12 @@ async function flushAudioChunk() {
     }
 
     await drainPendingChunks();
+
+  try {
+      mediaRecorder.requestData();
+    } catch (err) {
+      console.error('[LateMeet][offscreen] requestData failed:', err);
+    }
   } finally {
     isFlushInProgress = false;
   }
