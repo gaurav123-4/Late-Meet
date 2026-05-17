@@ -312,9 +312,9 @@ Here is the official bank of **14 active and open issues** currently available f
 
 ## 🐛 Known Issues
 
-| Issue                                                                                           | Status  | Link                                                  |
-| :---------------------------------------------------------------------------------------------- | :------ | :---------------------------------------------------- |
-| Audio capture intermittently fails after migration from OpenAI Whisper to ElevenLabs Scribe STT | 🔴 Open | [#1](https://github.com/shouri123/Late-Meet/issues/1) |
+| Issue                                                                                           | Status      | Link                                                  |
+| :---------------------------------------------------------------------------------------------- | :---------- | :---------------------------------------------------- |
+| Audio capture intermittently fails after migration from OpenAI Whisper to ElevenLabs Scribe STT | 🟢 Resolved | [#1](https://github.com/shouri123/Late-Meet/issues/1) |
 
 > Found another bug? Choose one of our GSSoC templates and open a detailed bug report on our [Issues](https://github.com/shouri123/Late-Meet/issues) board.
 
