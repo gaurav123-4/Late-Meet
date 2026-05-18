@@ -581,24 +581,30 @@ document.addEventListener("DOMContentLoaded", async () => {
       exportBtn?.setAttribute("aria-expanded", "false");
     }
   });
+
   document.getElementById("export-json-btn")?.addEventListener("click", async () => {
-    const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-    if (!state) return;
-    const sessionData = {
-      exportedAt: new Date().toISOString(),
-      summary: state.summary || "",
-      participants: state.participants || [],
-      topics: state.topics || [],
-      decisions: state.decisions || [],
-      actionItems: state.actionItems || [],
-      transcript: state.transcript || [],
-      timeline: state.timeline || [],
-    };
-    const filename = `meeting-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    downloadFile(JSON.stringify(sessionData, null, 2), filename, "application/json");
-    exportDropdown?.setAttribute("hidden", "");
-    exportBtn?.setAttribute("aria-expanded", "false");
-    showToast("Downloaded as .json backup", "success");
+    try {
+      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+      if (!state) throw new Error("No meeting data available");
+      const sessionData = {
+        exportedAt: new Date().toISOString(),
+        summary: state.summary || "",
+        participants: state.participants || [],
+        topics: state.topics || [],
+        decisions: state.decisions || [],
+        actionItems: state.actionItems || [],
+        transcript: state.transcript || [],
+        timeline: state.timeline || [],
+      };
+      const filename = `meeting-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      downloadFile(JSON.stringify(sessionData, null, 2), filename, "application/json");
+      showToast("Downloaded as .json backup", "success");
+    } catch (err) {
+      showToast("Failed to export: " + (err instanceof Error ? err.message : String(err)), "error");
+    } finally {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
+    }
   });
 
   document.getElementById("export-clipboard-btn")?.addEventListener("click", async () => {
@@ -607,11 +613,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (!state) return;
       const markdown = generateMarkdown(state);
       await navigator.clipboard.writeText(markdown);
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
       showToast("Copied to clipboard", "success");
     } catch {
       showToast("Failed to copy to clipboard", "error");
+    } finally {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
     }
   });
 
@@ -745,9 +752,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    navigator.clipboard.writeText(md).then(() => {
-      showToast("Session exported to clipboard", "success");
-    });
+    navigator.clipboard
+      .writeText(md)
+      .then(() => {
+        showToast("Session exported to clipboard", "success");
+      })
+      .catch((err) => {
+        showToast(
+          "Failed to export session: " + (err instanceof Error ? err.message : String(err)),
+          "error",
+        );
+      });
   }
 
   // Load sessions on tab switch
