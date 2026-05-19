@@ -24,6 +24,15 @@ function resolveTheme(theme: ThemeMode): "light" | "dark" {
   return theme;
 }
 
+function isValidAccent(value: string): boolean {
+  const accent = value.trim();
+  return (
+    /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(accent) ||
+    /^\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%$/.test(accent) ||
+    /^\d{1,3}\s+\d{1,3}%\s+\d{1,3}%$/.test(accent)
+  );
+}
+
 function normalizeSettings(raw: unknown): Settings {
   const candidate = (raw ?? {}) as Partial<Settings>;
 
@@ -32,14 +41,12 @@ function normalizeSettings(raw: unknown): Settings {
       ? candidate.theme
       : DEFAULT_SETTINGS.theme;
 
-  const accent =
-    typeof candidate.accent === "string" && candidate.accent.trim().length > 0
-      ? candidate.accent
-      : DEFAULT_SETTINGS.accent;
+  const accentCandidate = typeof candidate.accent === "string" ? candidate.accent.trim() : "";
+
+  const accent = isValidAccent(accentCandidate) ? accentCandidate : DEFAULT_SETTINGS.accent;
 
   return { theme, accent };
 }
-
 export async function getSettings(): Promise<Settings> {
   const result = await chrome.storage.local.get("settings");
   return normalizeSettings(result.settings);
