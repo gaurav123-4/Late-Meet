@@ -1,6 +1,68 @@
 import { State, Topic, TranscriptEntry, TimelineEvent, Decision, ActionItem } from "./types";
+import { initTheme } from "./theme.js";
+
+initTheme();
 
 document.addEventListener("DOMContentLoaded", async () => {
+  // ——— Waveform Visualizer ———
+  const WAVEFORM_N = 32;
+  const WAVEFORM_H = 48;
+  const WAVEFORM_SMOOTH = 0.55;
+
+  const waveformCanvas = document.getElementById("waveform-canvas") as HTMLCanvasElement | null;
+  const waveformStatusEl = document.getElementById("waveform-status");
+  let waveformCtx: CanvasRenderingContext2D | null = null;
+  let waveformCssW = 280;
+  let smoothed = new Array(WAVEFORM_N).fill(0);
+
+  function initWaveformCanvas() {
+    if (!waveformCanvas) return;
+    waveformCtx = waveformCanvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    waveformCssW = waveformCanvas.offsetWidth || 280;
+    waveformCanvas.width = Math.round(waveformCssW * dpr);
+    waveformCanvas.height = Math.round(WAVEFORM_H * dpr);
+    if (waveformCtx) waveformCtx.scale(dpr, dpr);
+    drawIdleWaveform();
+  }
+
+  function drawIdleWaveform() {
+    if (!waveformCtx) return;
+    const barGap = 2;
+    const barW = (waveformCssW - barGap * (WAVEFORM_N - 1)) / WAVEFORM_N;
+    const centerY = WAVEFORM_H / 2;
+    waveformCtx.clearRect(0, 0, waveformCssW, WAVEFORM_H);
+    for (let i = 0; i < WAVEFORM_N; i++) {
+      const x = i * (barW + barGap);
+      waveformCtx.fillStyle = "rgba(255,255,255,0.08)";
+      waveformCtx.beginPath();
+      waveformCtx.roundRect(x, centerY - 1, barW, 2, 1);
+      waveformCtx.fill();
+    }
+  }
+
+  function drawWaveform(buckets: number[]) {
+    if (!waveformCtx) return;
+    const barGap = 2;
+    const barW = (waveformCssW - barGap * (WAVEFORM_N - 1)) / WAVEFORM_N;
+    const centerY = WAVEFORM_H / 2;
+    waveformCtx.clearRect(0, 0, waveformCssW, WAVEFORM_H);
+    for (let i = 0; i < WAVEFORM_N; i++) {
+      smoothed[i] = smoothed[i] * WAVEFORM_SMOOTH + buckets[i] * (1 - WAVEFORM_SMOOTH);
+      const amp = smoothed[i];
+      const barH = Math.max(2, amp * WAVEFORM_H * 0.9);
+      const x = i * (barW + barGap);
+      const y = centerY - barH / 2;
+      const alpha = Math.min(1, 0.3 + amp * 2.4);
+      waveformCtx.fillStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
+      waveformCtx.beginPath();
+      waveformCtx.roundRect(x, y, barW, barH, barW / 2);
+      waveformCtx.fill();
+    }
+  }
+
+  initWaveformCanvas();
+
   // ——— Tab Switching ———
   const tabs = document.querySelectorAll(".dash-tab");
   const panels = document.querySelectorAll(".tab-panel");
@@ -33,12 +95,27 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (message.type === "STATE_UPDATE") {
       lastState = message.state;
       updateDashboard(message.state);
+      if (!message.state?.audioActive) {
+        smoothed = new Array(WAVEFORM_N).fill(0);
+        drawIdleWaveform();
+        if (waveformStatusEl) {
+          waveformStatusEl.textContent = "IDLE";
+          waveformStatusEl.classList.remove("active");
+        }
+      }
     }
     if (message.type === "SESSION_ENDED") {
       // Reload sessions if on that tab
       const sessionsTab = document.querySelector('[data-tab="sessions"]');
       if (sessionsTab?.classList.contains("active")) {
         loadSavedSessions();
+      }
+    }
+    if (message.type === "WAVEFORM_DATA" && Array.isArray(message.buckets)) {
+      drawWaveform(message.buckets);
+      if (waveformStatusEl && !waveformStatusEl.classList.contains("active")) {
+        waveformStatusEl.textContent = "LIVE";
+        waveformStatusEl.classList.add("active");
       }
     }
   });
@@ -54,6 +131,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       audioBtn.disabled = true;
       audioBtn.textContent = "Starting...";
+
+      // Request mic permission from this user-facing page while the gesture is still live.
+      // Chrome grants the permission to the extension origin so the offscreen doc inherits it.
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        micStream.getTracks().forEach((t) => t.stop());
+      } catch {
+        console.warn("[Dashboard] Mic permission not granted — waveform will use tab audio only");
+      }
 
       chrome.tabs.query({ url: "https://meet.google.com/*" }, (meetTabs) => {
         if (meetTabs.length === 0) {
@@ -486,56 +572,139 @@ document.addEventListener("DOMContentLoaded", async () => {
     container.scrollTop = container.scrollHeight;
   }
 
-  // ——— Export ———
-  document.getElementById("export-btn")?.addEventListener("click", async () => {
+  // ——— Export Helpers ———
+  function generateMarkdown(state: State): string {
+    let markdown = `# Meeting Summary\n\n`;
+    markdown += `**Date:** ${new Date().toLocaleDateString()}\n`;
+    markdown += `**Duration:** ${formatDuration(state.duration || 0)}\n`;
+    markdown += `**Participants:** ${state.participants?.join(", ") || "N/A"}\n\n`;
+    markdown += `## Summary\n${state.summary || "N/A"}\n\n`;
+    if (state.topics?.length) {
+      markdown += `## Topics\n`;
+      state.topics.forEach((t: Topic) => (markdown += `- ${t.name} (${t.status})\n`));
+      markdown += "\n";
+    }
+    if (state.decisions?.length) {
+      markdown += `## Decisions\n`;
+      state.decisions.forEach(
+        (d: Decision) => (markdown += `- ${d.text}${d.by ? ` — ${d.by}` : ""}\n`),
+      );
+      markdown += "\n";
+    }
+    if (state.actionItems?.length) {
+      markdown += `## Action Items\n`;
+      state.actionItems.forEach((a: ActionItem) => {
+        markdown += `- [ ] ${a.task}`;
+        if (a.owner) markdown += ` → ${a.owner}`;
+        if (a.deadline) markdown += ` (due: ${a.deadline})`;
+        markdown += "\n";
+      });
+    }
+    return markdown;
+  }
+
+  let exportToastTimer: number | null = null;
+
+  function showToast(message: string, type: "success" | "error" = "success"): void {
+    const toast = document.getElementById("export-toast") as HTMLDivElement;
+    if (!toast) return;
+    if (exportToastTimer) window.clearTimeout(exportToastTimer);
+    toast.textContent = message;
+    toast.className = `export-toast ${type} show`;
+    exportToastTimer = window.setTimeout(() => {
+      toast.className = "export-toast";
+      exportToastTimer = null;
+    }, 3000);
+  }
+
+  function downloadFile(content: string, filename: string, mimeType: string): void {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+
+  // ——— Export Dropdown ———
+  const exportBtn = document.getElementById("export-btn") as HTMLButtonElement;
+  const exportDropdown = document.getElementById("export-dropdown") as HTMLDivElement;
+
+  exportBtn?.addEventListener("click", () => {
+    const isHidden = exportDropdown.hasAttribute("hidden");
+    if (isHidden) {
+      exportDropdown.removeAttribute("hidden");
+      exportBtn.setAttribute("aria-expanded", "true");
+    } else {
+      exportDropdown.setAttribute("hidden", "");
+      exportBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  document.addEventListener("click", (e: MouseEvent) => {
+    const wrapper = document.getElementById("export-wrapper");
+    if (wrapper && !wrapper.contains(e.target as Node)) {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  document.getElementById("export-md-btn")?.addEventListener("click", async () => {
+    try {
+      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+      if (!state) throw new Error("No meeting data available");
+      const markdown = generateMarkdown(state);
+      const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.md`;
+      downloadFile(markdown, filename, "text/markdown");
+      showToast("Downloaded as .md file", "success");
+    } catch (err) {
+      showToast("Failed to export: " + (err instanceof Error ? err.message : String(err)), "error");
+    } finally {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  document.getElementById("export-json-btn")?.addEventListener("click", async () => {
+    try {
+      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+      if (!state) throw new Error("No meeting data available");
+      const sessionData = {
+        exportedAt: new Date().toISOString(),
+        summary: state.summary || "",
+        participants: state.participants || [],
+        topics: state.topics || [],
+        decisions: state.decisions || [],
+        actionItems: state.actionItems || [],
+        transcript: state.transcript || [],
+        timeline: state.timeline || [],
+      };
+      const filename = `meeting-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      downloadFile(JSON.stringify(sessionData, null, 2), filename, "application/json");
+      showToast("Downloaded as .json backup", "success");
+    } catch (err) {
+      showToast("Failed to export: " + (err instanceof Error ? err.message : String(err)), "error");
+    } finally {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  document.getElementById("export-clipboard-btn")?.addEventListener("click", async () => {
     try {
       const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
       if (!state) return;
-
-      let markdown = `# Meeting Summary\n\n`;
-      markdown += `**Date:** ${new Date().toLocaleDateString()}\n`;
-      markdown += `**Duration:** ${formatDuration(state.duration || 0)}\n`;
-      markdown += `**Participants:** ${state.participants?.join(", ") || "N/A"}\n\n`;
-      markdown += `## Summary\n${state.summary || "N/A"}\n\n`;
-
-      if (state.topics?.length) {
-        markdown += `## Topics\n`;
-        state.topics.forEach((t: Topic) => (markdown += `- ${t.name} (${t.status})\n`));
-        markdown += "\n";
-      }
-
-      if (state.decisions?.length) {
-        markdown += `## Decisions\n`;
-        state.decisions.forEach(
-          (d: Decision) => (markdown += `- ${d.text}${d.by ? ` — ${d.by}` : ""}\n`),
-        );
-        markdown += "\n";
-      }
-
-      if (state.actionItems?.length) {
-        markdown += `## Action Items\n`;
-        state.actionItems.forEach((a: ActionItem) => {
-          markdown += `- [ ] ${a.task}`;
-          if (a.owner) markdown += ` → ${a.owner}`;
-          if (a.deadline) markdown += ` (due: ${a.deadline})`;
-          markdown += "\n";
-        });
-      }
-
-      // Copy to clipboard
+      const markdown = generateMarkdown(state);
       await navigator.clipboard.writeText(markdown);
-
-      const btn = document.getElementById("export-btn") as HTMLButtonElement | null;
-      if (btn) {
-        const originalContent = btn.innerHTML;
-        btn.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right:6px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Copied to clipboard!';
-        setTimeout(() => {
-          btn.innerHTML = originalContent;
-        }, 2000);
-      }
-    } catch (err) {
-      console.error("Export failed:", err);
+      showToast("Copied to clipboard", "success");
+    } catch {
+      showToast("Failed to copy to clipboard", "error");
+    } finally {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
     }
   });
 
@@ -669,9 +838,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    navigator.clipboard.writeText(md).then(() => {
-      alert("Session exported to clipboard as Markdown!");
-    });
+    navigator.clipboard
+      .writeText(md)
+      .then(() => {
+        showToast("Session exported to clipboard", "success");
+      })
+      .catch((err) => {
+        showToast(
+          "Failed to export session: " + (err instanceof Error ? err.message : String(err)),
+          "error",
+        );
+      });
   }
 
   // Load sessions on tab switch

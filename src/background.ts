@@ -2,6 +2,9 @@
 
 import { State } from "./types";
 import { audioFileExtensionForMimeType, isChunkViable } from "./audioProcessing";
+import { initTheme } from "./theme.js";
+
+initTheme();
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -383,6 +386,8 @@ function getTranscriptionPrompt() {
 
 async function transcribeChunk(base64Audio: string, mimeType = "audio/webm", prompt = "") {
   // Single declaration — retrieved from session storage where ElevenLabs keys are stored.
+  // Use ElevenLabs API key if available, fallback to OpenAI if not?
+  // No, the requirement is to use ElevenLabs.
   const elevenlabsKey = await chrome.storage.session
     .get("elevenlabs_api_key")
     .then((r) => r.elevenlabs_api_key);
@@ -590,6 +595,26 @@ async function summarizeTranscriptIfNeeded() {
     ];
 
     const systemPrompt = `You are a World-Class Meeting Intelligence Engine. 
+  const topicDetectionEnabled = isFeatureEnabled(settings, "topicDetection");
+  const decisionDetectionEnabled = isFeatureEnabled(settings, "decisionDetection");
+  const actionExtractionEnabled = isFeatureEnabled(settings, "actionExtraction");
+  const sentimentAnalysisEnabled = isFeatureEnabled(settings, "sentimentAnalysis");
+  const outputFields = [
+    '"summary": "Updated meeting summary..."',
+    ...(topicDetectionEnabled
+      ? [
+          '"topics": [{"name": "Topic", "status": "active|completed"}]',
+          '"currentTopic": "Identifying the current main topic"',
+        ]
+      : []),
+    ...(decisionDetectionEnabled ? ['"decisions": ["Decision 1", ...]'] : []),
+    ...(actionExtractionEnabled ? ['"actionItems": ["Action 1", ...]'] : []),
+    ...(sentimentAnalysisEnabled ? ['"sentiment": "positive|neutral|negative|mixed"'] : []),
+    '"keyInsights": ["Insight 1", ...]',
+    '"questionsRaised": ["Question 1", ...]',
+  ];
+
+  const systemPrompt = `You are a World-Class Meeting Intelligence Engine. 
 Your goal is to extract high-fidelity insights from meeting transcripts.
 
 OUTPUT GUIDELINES:
@@ -700,6 +725,39 @@ Return a JSON object with these exact keys:
     // Always release the in-flight slot so future calls are not blocked.
     summaryInFlight = false;
   }
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) return;
+
+  const parsed = JSON.parse(content);
+  state.summary = parsed.summary || state.summary;
+  if (topicDetectionEnabled) {
+    state.topics = Array.isArray(parsed.topics) ? parsed.topics : state.topics;
+    state.currentTopic = parsed.currentTopic || state.currentTopic;
+  } else {
+    state.topics = [];
+    state.currentTopic = "";
+  }
+  if (decisionDetectionEnabled) {
+    state.decisions = Array.isArray(parsed.decisions) ? parsed.decisions : state.decisions;
+  } else {
+    state.decisions = [];
+  }
+  if (actionExtractionEnabled) {
+    state.actionItems = Array.isArray(parsed.actionItems) ? parsed.actionItems : state.actionItems;
+  } else {
+    state.actionItems = [];
+  }
+  if (sentimentAnalysisEnabled) {
+    state.sentiment = parsed.sentiment || state.sentiment;
+  } else {
+    state.sentiment = "neutral";
+  }
+  state.keyInsights = Array.isArray(parsed.keyInsights) ? parsed.keyInsights : state.keyInsights;
+  state.questionsRaised = Array.isArray(parsed.questionsRaised)
+    ? parsed.questionsRaised
+    : state.questionsRaised;
+  state.lastSummarizedAt = Date.now();
 }
 
 function detectNewJoiners(currentList: string[]) {
@@ -1030,6 +1088,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   } catch (err) {
     // Tab might be closed by now
     console.log(err);
+    console.log(err); // since lint is giving error
   }
 });
 
@@ -1090,6 +1149,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "OFFSCREEN_LOG": {
+      case "WAVEFORM_DATA": {
+        if (!message._relayed) {
+          chrome.runtime
+            .sendMessage({ type: "WAVEFORM_DATA", buckets: message.buckets, _relayed: true })
+            .catch(() => {});
+        }
+        sendResponse({ success: true });
+        return;
+      }
+
+      case "OFFSCREEN_LOG": {
+        // Relay log lines from the offscreen document into the SW console so
+        // they are visible without opening the offscreen DevTools separately.
         console.log("[LateMeet][offscreen]", message.message);
         sendResponse({ success: true });
         return;
