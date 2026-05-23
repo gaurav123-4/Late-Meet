@@ -207,6 +207,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ——— Session Save/Discard Modal ———
   function showSessionModal() {
+    const saveBtn = document.getElementById("save-session-btn") as HTMLButtonElement | null;
+    const discardBtn = document.getElementById("discard-session-btn") as HTMLButtonElement | null;
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save Session";
+      saveBtn.classList.remove("loading");
+    }
+    if (discardBtn) {
+      discardBtn.disabled = false;
+      discardBtn.textContent = "Discard";
+      discardBtn.classList.remove("loading");
+    }
     sessionModal.style.display = "flex";
     requestAnimationFrame(() => sessionModal.classList.add("visible"));
   }
@@ -218,14 +230,58 @@ document.addEventListener("DOMContentLoaded", async () => {
     }, 300);
   }
 
-  document.getElementById("save-session-btn")?.addEventListener("click", async () => {
-    await chrome.runtime.sendMessage({ type: "SAVE_SESSION" });
-    hideSessionModal();
+  document.getElementById("save-session-btn")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const discardBtn = document.getElementById("discard-session-btn") as HTMLButtonElement | null;
+    const originalText = btn.textContent || "Save Session";
+
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+    btn.classList.add("loading");
+    if (discardBtn) {
+      discardBtn.disabled = true;
+    }
+
+    try {
+      await chrome.runtime.sendMessage({ type: "SAVE_SESSION" });
+      hideSessionModal();
+    } catch (err) {
+      console.error("[LateMeet] Failed to save session:", err);
+      // Restore states on error
+      btn.disabled = false;
+      btn.textContent = originalText;
+      btn.classList.remove("loading");
+      if (discardBtn) {
+        discardBtn.disabled = false;
+      }
+    }
   });
 
-  document.getElementById("discard-session-btn")?.addEventListener("click", async () => {
-    await chrome.runtime.sendMessage({ type: "DISCARD_SESSION" });
-    hideSessionModal();
+  document.getElementById("discard-session-btn")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const saveBtn = document.getElementById("save-session-btn") as HTMLButtonElement | null;
+    const originalText = btn.textContent || "Discard";
+
+    btn.disabled = true;
+    btn.textContent = "Discarding...";
+    btn.classList.add("loading");
+    if (saveBtn) {
+      saveBtn.disabled = true;
+    }
+
+    try {
+      await chrome.runtime.sendMessage({ type: "DISCARD_SESSION" });
+      hideSessionModal();
+    } catch (err) {
+      console.error("[LateMeet] Failed to discard session:", err);
+      // Restore states on error
+      btn.disabled = false;
+      btn.textContent = originalText;
+      btn.classList.remove("loading");
+      if (saveBtn) {
+        saveBtn.disabled = false;
+      }
+    }
   });
 
   // ——— Check for pending session on load ———

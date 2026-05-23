@@ -625,21 +625,60 @@ async function savePendingSession() {
   await chrome.storage.local.set({ pendingSession: session });
 }
 
-async function persistSession() {
-  const { pendingSession, savedSessions } = await chrome.storage.local.get([
-    "pendingSession",
-    "savedSessions",
-  ]);
-  if (!pendingSession) return;
+let isProcessingSession = false;
 
-  const sessions = Array.isArray(savedSessions) ? savedSessions : [];
-  sessions.unshift(pendingSession);
-  await chrome.storage.local.set({ savedSessions: sessions, pendingSession: null });
+async function persistSession() {
+  if (isProcessingSession) {
+    console.log("[LateMeet] Already processing session, ignoring duplicate save request.");
+    return;
+  }
+  isProcessingSession = true;
+  try {
+    const { pendingSession, savedSessions } = await chrome.storage.local.get([
+      "pendingSession",
+      "savedSessions",
+    ]);
+    if (!pendingSession) {
+      console.log("[LateMeet] No pending session found to save.");
+      return;
+    }
+
+    const sessions = Array.isArray(savedSessions) ? savedSessions : [];
+
+    // Check if the session ID already exists in savedSessions to prevent duplicate entries
+    const sessionExists = sessions.some((s: any) => s.id === pendingSession.id);
+    if (sessionExists) {
+      console.log("[LateMeet] Session already persisted, ignoring duplicate save.");
+      return;
+    }
+
+    sessions.unshift(pendingSession);
+    await chrome.storage.local.set({ savedSessions: sessions, pendingSession: null });
+    console.log("[LateMeet] Session successfully saved:", pendingSession.id);
+  } catch (err) {
+    console.error("[LateMeet] Error persisting session:", err);
+  } finally {
+    isProcessingSession = false;
+  }
 }
 
 async function discardPendingSession() {
-  await chrome.storage.local.set({ pendingSession: null });
+  if (isProcessingSession) {
+    console.log("[LateMeet] Already processing session, ignoring duplicate discard request.");
+    return;
+  }
+  isProcessingSession = true;
+  try {
+    await chrome.storage.local.set({ pendingSession: null });
+    console.log("[LateMeet] Pending session discarded.");
+  } catch (err) {
+    console.error("[LateMeet] Error discarding session:", err);
+  } finally {
+    isProcessingSession = false;
+  }
 }
+
+let isStartingAudio = false;
 
 async function startAudioCapture(
   tabId: number,
@@ -649,22 +688,31 @@ async function startAudioCapture(
   includeMicrophone = true,
 ) {
   if (!tabId) throw new Error("Missing target tab id");
-
-  await ensureOffscreenDocument();
+  if (state.audioActive) {
+    console.log("[LateMeet] Audio already active, skipping start request.");
+    return;
+  }
+  if (isStartingAudio) {
+    console.log("[LateMeet] Audio start already in progress, skipping start request.");
+    return;
+  }
+  isStartingAudio = true;
 
   const createdSession = !state.isActive;
 
-  if (createdSession) {
-    resetState();
-    state.isActive = true;
-    state.startTime = Date.now();
-    state.meetingId = meetingId || "unknown";
-    state.meetingUrl = meetingUrl || null;
-    state.targetTabId = tabId;
-    addTimeline(`Meeting started (${state.meetingId})`);
-  }
-
   try {
+    await ensureOffscreenDocument();
+
+    if (createdSession) {
+      resetState();
+      state.isActive = true;
+      state.startTime = Date.now();
+      state.meetingId = meetingId || "unknown";
+      state.meetingUrl = meetingUrl || null;
+      state.targetTabId = tabId;
+      addTimeline(`Meeting started (${state.meetingId})`);
+    }
+
     let streamId = providedStreamId;
 
     if (!streamId) {
@@ -718,6 +766,8 @@ async function startAudioCapture(
       await broadcastStateUpdate();
     }
     throw err;
+  } finally {
+    isStartingAudio = false;
   }
 }
 
