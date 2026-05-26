@@ -933,7 +933,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         const meetingId = message.meetingId || state.meetingId;
-        const meetingUrl = sender?.tab?.url || state.meetingUrl;
+        const meetingUrl = message.meetingUrl || sender?.tab?.url || state.meetingUrl;
         await startAudioCapture(
           tabId,
           meetingId,

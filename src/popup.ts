@@ -125,6 +125,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               type: "MANUAL_START_AUDIO",
               tabId: meetTab.id,
               meetingId: meetingId,
+              meetingUrl: meetTab.url || null,
               streamId: streamId,
               includeMicrophone: true,
             });
