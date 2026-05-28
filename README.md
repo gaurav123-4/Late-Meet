@@ -198,6 +198,8 @@ The extension is built natively on Manifest V3 using **TypeScript and Vite 5** f
    - Join a Google Meet call.
    - Click the floating **Start Copilot** button, and open the full Side Panel to view real-time meeting briefings!
 
+> **💡 For detailed development & debugging instructions**, see [**DEVELOPMENT.md**](DEVELOPMENT.md) — includes Chrome extension debugging guides, hot reload workflow, and common errors.
+
 ---
 
 ## 🛠️ Technology Stack
